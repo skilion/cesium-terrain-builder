@@ -1,5 +1,15 @@
-# Cesium Terrain Builder
+Fork notes
+==========
+This fork starts off the excellent work of [ahuarte47](https://github.com/ahuarte47)
+(that gave CTB support for the quantized mesh format) to add the functionality
+of storing the quantized tiles in the [MBTiles](https://github.com/mapbox/mbtiles-spec)
+format which is more convenient when dealing with hundreds of thousands small files.
 
+This fork adds a new output format `-f MBTilesMesh` that forces CTB to generate a
+single MBTiles file with extension `.sqlite3`. The output tiles can be served with
+[mbtiles-terrain-server](https://github.com/TNOCS/mbtiles-terrain-server).
+
+# Cesium Terrain Builder
 This is a C++ library and associated command line tools designed to create
 terrain tiles for use with the [Cesium JavaScript](http://cesiumjs.org) library.
 
@@ -64,7 +74,7 @@ Options:
   -V, --version                       output program version
   -h, --help                          output help information
   -o --output-dir <dir>               specify the output directory for the tiles (defaults to working directory)
-  -f --output-format <format>         specify the output format for the tiles. This is either `Terrain` (the default), `Mesh` (Chunked LOD mesh), or any format listed by `gdalinfo --formats`
+  -f --output-format <format>         specify the output format for the tiles. This is either `Terrain` (the default), `Mesh`, `MBTilesMesh`, or any format listed by `gdalinfo --formats`
   -p --profile <profile>              specify the TMS profile for the tiles. This is either `geodetic` (the default) or `mercator`
   -c --thread-count <count>           specify the number of threads to use for tile generation. On multicore machines this defaults to the number of CPUs
   -t --tile-size <size>               specify the size of the tiles in pixels. This defaults to 65 for terrain tiles and 256 for other GDAL formats
