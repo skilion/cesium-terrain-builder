@@ -23,9 +23,11 @@ add_library(ctb SHARED
   GDALDatasetReader.cpp
   CTBFileTileSerializer.cpp
   CTBFileOutputStream.cpp
+  CTBMBTilesTileSerializer.cpp
   CTBZOutputStream.cpp
   TerrainTiler.cpp
   TerrainTile.cpp
+  MBTiler.cpp
   MeshTiler.cpp
   MeshTile.cpp
   GlobalMercator.cpp
@@ -44,6 +46,7 @@ set(HEADERS
   GDALDatasetReader.hpp
   CTBFileTileSerializer.hpp
   CTBFileOutputStream.hpp
+  CTBMBTilesTileSerializer.hpp
   CTBOutputStream.hpp
   CTBZOutputStream.hpp
   GlobalGeodetic.hpp
@@ -51,6 +54,7 @@ set(HEADERS
   Grid.hpp
   GridIterator.hpp
   HeightFieldChunker.hpp
+  MBTiler.hpp
   Mesh.hpp
   MeshIterator.hpp
   MeshSerializer.hpp
