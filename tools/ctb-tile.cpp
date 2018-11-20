@@ -50,9 +50,11 @@
 #include "GlobalMercator.hpp"
 #include "RasterIterator.hpp"
 #include "TerrainIterator.hpp"
+#include "MBTiler.hpp"
 #include "MeshIterator.hpp"
 #include "GDALDatasetReader.hpp"
 #include "CTBFileTileSerializer.hpp"
+#include "CTBMBTilesTileSerializer.hpp"
 
 using namespace std;
 using namespace ctb;
@@ -703,7 +705,7 @@ buildMetadata(const RasterTiler &tiler, TerrainBuild *command, TerrainMetadata *
  * This function is designed to be run in a separate thread.
  */
 static int
-runTiler(const char *inputFilename, TerrainBuild *command, Grid *grid, TerrainMetadata *metadata) {
+runTiler(const char *inputFilename, TerrainBuild *command, Grid *grid, TerrainMetadata *metadata, MBTiler *mbtiler) {
   GDALDataset  *poDataset = (GDALDataset *) GDALOpen(inputFilename, GA_ReadOnly);
   if (poDataset == NULL) {
     cerr << "Error: could not open GDAL dataset" << endl;
@@ -713,30 +715,40 @@ runTiler(const char *inputFilename, TerrainBuild *command, Grid *grid, TerrainMe
   // Metadata of only this thread, it will be joined to global later
   TerrainMetadata *threadMetadata = metadata ? new TerrainMetadata() : NULL;
 
-  // Choose serializer of tiles (Directory of files, MBTiles store...)
-  CTBFileTileSerializer serializer(string(command->outputDir) + osDirSep, command->resume);
-
   try {
-    serializer.startSerialization();
 
     if (command->metadata) {
       const RasterTiler tiler(poDataset, *grid, command->tilerOptions);
       buildMetadata(tiler, command, threadMetadata);
     } else if (strcmp(command->outputFormat, "Terrain") == 0) {
+      CTBFileTileSerializer serializer(string(command->outputDir) + osDirSep, command->resume);
       const TerrainTiler tiler(poDataset, *grid);
+      serializer.startSerialization();
       buildTerrain(serializer, tiler, command, threadMetadata);
+      serializer.endSerialization();
     } else if (strcmp(command->outputFormat, "Mesh") == 0) {
+      CTBFileTileSerializer serializer(string(command->outputDir) + osDirSep, command->resume);
       const MeshTiler tiler(poDataset, *grid, command->tilerOptions, command->meshQualityFactor);
+      serializer.startSerialization();
       buildMesh(serializer, tiler, command, threadMetadata, command->vertexNormals);
+      serializer.endSerialization();
+    } else if (strcmp(command->outputFormat, "MBTilesMesh") == 0) {
+      CTBMBTilesTileSerializer serializer(mbtiler, command->resume);
+      const MeshTiler tiler(poDataset, *grid, command->tilerOptions, command->meshQualityFactor);
+      serializer.startSerialization();
+      buildMesh(serializer, tiler, command, threadMetadata, command->vertexNormals);
+      serializer.endSerialization();
     } else {                    // it's a GDAL format
+      CTBFileTileSerializer serializer(string(command->outputDir) + osDirSep, command->resume);
       const RasterTiler tiler(poDataset, *grid, command->tilerOptions);
+      serializer.startSerialization();
       buildGDAL(serializer, tiler, command, threadMetadata);
+      serializer.endSerialization();
     }
 
   } catch (CTBException &e) {
     cerr << "Error: " << e.what() << endl;
   }
-  serializer.endSerialization();
 
   GDALClose(poDataset);
 
@@ -757,7 +769,7 @@ main(int argc, char *argv[]) {
   TerrainBuild command = TerrainBuild(argv[0], version.cstr);
   command.setUsage("[options] GDAL_DATASOURCE");
   command.option("-o", "--output-dir <dir>", "specify the output directory for the tiles (defaults to working directory)", TerrainBuild::setOutputDir);
-  command.option("-f", "--output-format <format>", "specify the output format for the tiles. This is either `Terrain` (the default), `Mesh` (Chunked LOD mesh), or any format listed by `gdalinfo --formats`", TerrainBuild::setOutputFormat);
+  command.option("-f", "--output-format <format>", "specify the output format for the tiles. This is either `Terrain` (the default), `Mesh` (Chunked LOD mesh), `MBTilesMesh`, or any format listed by `gdalinfo --formats`", TerrainBuild::setOutputFormat);
   command.option("-p", "--profile <profile>", "specify the TMS profile for the tiles. This is either `geodetic` (the default) or `mercator`", TerrainBuild::setProfile);
   command.option("-c", "--thread-count <count>", "specify the number of threads to use for tile generation. On multicore machines this defaults to the number of CPUs", TerrainBuild::setThreadCount);
   command.option("-t", "--tile-size <size>", "specify the size of the tiles in pixels. This defaults to 65 for terrain tiles and 256 for other GDAL formats", TerrainBuild::setTileSize);
@@ -798,6 +810,22 @@ main(int argc, char *argv[]) {
     return 1;
   }
 
+  // Open the MBTiles file if required
+  MBTiler *mbtiler = NULL;
+  if (strcmp(command.outputFormat, "MBTilesMesh") == 0 && !command.metadata) {
+	  string outputFile = command.outputDir;
+	  outputFile += ".sqlite3";
+    if (!command.resume) {
+      VSIUnlink(outputFile.c_str());
+    }
+    mbtiler = new MBTiler(outputFile.c_str());
+    mbtiler->setMetadata("name", "cesium terrain");
+    mbtiler->setMetadata("format", "application/vnd.quantized-mesh");
+    if (command.resume) {
+      cout << mbtiler->numTiles() << " tiles already written" << endl;
+    }
+  }
+
   // Define the grid we are going to use
   Grid grid;
   if (strcmp(command.profile, "geodetic") == 0) {
@@ -822,9 +850,9 @@ main(int argc, char *argv[]) {
 
   // Instantiate the threads using futures from a packaged_task
   for (int i = 0; i < threadCount ; ++i) {
-    packaged_task<int(const char *, TerrainBuild *, Grid *, TerrainMetadata *)> task(runTiler); // wrap the function
+    packaged_task<int(const char *, TerrainBuild *, Grid *, TerrainMetadata *, MBTiler *)> task(runTiler); // wrap the function
     tasks.push_back(task.get_future()); // get a future
-    thread(move(task), command.getInputFilename(), &command, &grid, metadata).detach(); // launch on a thread
+    thread(move(task), command.getInputFilename(), &command, &grid, metadata, mbtiler).detach(); // launch on a thread
   }
 
   // Synchronise the completion of the threads
@@ -873,7 +901,7 @@ main(int argc, char *argv[]) {
         command.startZoom = 0;
         command.endZoom = 0;
         missingTileName = createEmptyRootElevationFile(missingTileName, grid, missingTileCoord);
-        runTiler (missingTileName.c_str(), &command, &grid, NULL);
+        runTiler(missingTileName.c_str(), &command, &grid, NULL, mbtiler);
         VSIUnlink(missingTileName.c_str());
       }
     }
